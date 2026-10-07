@@ -1,0 +1,87 @@
+name: NOBIXCRAZY - RDP + Tailscale (5 Hours)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ts_authkey:
+        description: "Tailscale Auth Key (tskey-auth-XXXX)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nobixcrazy-single-session
+  cancel-in-progress: false
+
+jobs:
+  rdp:
+    runs-on: windows-latest
+    timeout-minutes: 300  # EXACT 5 HOURS
+
+    env:
+      # ===== RDP CREDENTIALS =====
+      RDP_USER: NOBIXCRAZY
+      RDP_PASS: Rdp!9Xq#2025
+
+      # ===== FIXED TAILSCALE NAME =====
+      TS_HOSTNAME: NOBIXCRAZY
+
+    steps:
+      - name: Install and start Tailscale
+        run: |
+          $exe = "$env:ProgramFiles\Tailscale\tailscale.exe"
+
+          if (-not (Test-Path $exe)) {
+            Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi" -OutFile "$env:TEMP\tailscale.msi"
+            Start-Process msiexec.exe -Wait -ArgumentList "/i","$env:TEMP\tailscale.msi","/quiet","/norestart"
+          }
+
+          & $exe logout | Out-Null
+          & $exe up --authkey "${{ inputs.ts_authkey }}" --hostname "$env:TS_HOSTNAME" --accept-dns=false --reset
+
+      - name: Enable and Configure RDP
+        run: |
+          # User set up
+          $sec = ConvertTo-SecureString $env:RDP_PASS -AsPlainText -Force
+
+          if (-not (Get-LocalUser -Name $env:RDP_USER -ErrorAction SilentlyContinue)) {
+              New-LocalUser -Name $env:RDP_USER -Password $sec -FullName $env:RDP_USER
+              Add-LocalGroupMember -Group "Administrators" -Member $env:RDP_USER
+              Add-LocalGroupMember -Group "Remote Desktop Users" -Member $env:RDP_USER
+          } else {
+              Set-LocalUser -Name $env:RDP_USER -Password $sec
+              Enable-LocalUser -Name $env:RDP_USER
+          }
+
+          # Enable RDP Registry Keys
+          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 0
+
+          # Enable Firewall Rules & Start Service
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-Service -Name "TermService" -StartupType Automatic
+          Start-Service -Name "TermService" -WarningAction SilentlyContinue
+
+      - name: Show Tailscale IP (NOBIXCRAZY)
+        run: |
+          $exe = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          $ip = & $exe ip -4 | Select-Object -First 1
+
+          Write-Host "=========================================="
+          Write-Host " RDP NAME : NOBIXCRAZY"
+          Write-Host " RDP IP   : $ip"
+          Write-Host " USER     : NOBIXCRAZY"
+          Write-Host " PASS     : Rdp!9Xq#2025"
+          Write-Host "=========================================="
+
+      - name: KEEP ALIVE (5 HOURS CONTINUOUS)
+        run: |
+          $end = (Get-Date).AddHours(5)
+          while ((Get-Date) -lt $end) {
+              Start-Sleep -Seconds 60
+          }
+
+      - name: Finished
+        run: echo "NOBIXCRAZY session ended after 5 hours"
